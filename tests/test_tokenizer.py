@@ -111,8 +111,9 @@ def test_roundtrip_single_character():
     )
     test_string = "s"
     encoded_ids = tokenizer.encode(test_string)
+    print(f"Encoded IDs: {encoded_ids}")
     decoded_string = tokenizer.decode(encoded_ids)
-    assert test_string == decoded_string
+    assert test_string == decoded_string, f"Test string: {test_string}, Decoded string: {decoded_string}"
 
 
 def test_single_character_matches_tiktoken():
