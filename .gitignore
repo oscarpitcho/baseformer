@@ -2,6 +2,9 @@
 
 data/
 
+# Scalene
+scalene-profile.json
+scalene-profile.html
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

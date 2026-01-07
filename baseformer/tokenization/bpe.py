@@ -15,7 +15,7 @@ https://github.com/karpathy/minbpe/tree/master
 
 import heapq
 import logging
-from typing import List, Tuple, Set, Dict, Iterable, Iterator
+from typing import Any, List, Tuple, Set, Dict, Iterable, Iterator
 import regex as re
 import pickle
 import multiprocessing as mp
@@ -35,7 +35,7 @@ class MergeJob:
     as a negative number as python heaps are min-only. Should be built
     using the build method, and only freq should be accessed."""
     _freq_internal: int
-    pair: Tuple[int, int]
+    pair: Tuple[int, int] 
 
     @property
     def freq(self) -> int:
@@ -59,36 +59,53 @@ class PairData:
 class BPETokenizer:
 
     def __init__(self, vocab: Dict[int, bytes], merges: List[Tuple[bytes, bytes]], special_tokens: List[str] | None = None):
+        """Default special tokens are <|endoftext|>, additional special tokens can be added."""
         self.vocab = vocab
         self.merges = merges
         self.merges_dict = dict(zip(merges, range(len(merges))))
         self.vocab_reverse_map = {bytes_seq: token_id for token_id, bytes_seq in self.vocab.items()}
+        self.special_tokens = set()
+        if special_tokens is not None:
+            self.special_tokens.update(special_tokens)
+        self.special_tokens.add("<|endoftext|>")
+        self.special_tok_pat = "(" + '|'.join(re.escape(token) for token in self.special_tokens) + ")"
 
-        self.special_tokens = special_tokens if not (special_tokens is  None) else []
-        self.special_tokens_reverse_map = {}
+        self.special_tokens_reverse_map: Dict[bytes, int] = {}
 
-        # Save special tokens in vocabulary for fast decoding.
+        # Special token handling
         i = len(self.vocab)
-        self.special_token_reverse_map = {}
         for st in self.special_tokens:
-            st_b = st.encode('utf-8')
-            self.vocab[i] = st_b
-            self.special_tokens_reverse_map[st_b] = i
-            i +=1
+                self.special_tokens_reverse_map[st.encode('utf-8')] = len(self.vocab)
+                self.vocab[i] = st.encode('utf-8')
+                i += 1
         
     def encode(self, text: str) -> List[int]:
-        words = re.findall(PAT, text)
+        if self.special_tok_pat is None:
+            return self._encode_segment(text)
+        else:
+            res = []
+            segments = re.splititer(self.special_tok_pat, text)
+            for i, seq in enumerate(segments):
+                if i % 2 == 1: # Special Token
+                    st_bytes = seq.encode("utf-8")
+                    if not (st_bytes in self.special_tokens_reverse_map):
+                        logger.warning(f"Unknown special token {seq} found, encoding as normal word.")
+                        res.extend(self._encode_word(st_bytes))
+                    else:
+                        res.append(self.special_tokens_reverse_map[st_bytes]) 
+                else: # Normal Text
+                    res.extend(self._encode_segment(seq))
+        return res
 
-        seq = []
-        for w in words:
-            w_bytes = w.encode("utf-8")
-            if w_bytes in self.special_token_reverse_map:
-                seq.append(self.special_token_reverse_map[w_bytes])
-            else:
-                encoding = self._encode_word(w_bytes)
-                seq.extend(encoding)
 
-        return seq
+    def _encode_segment(self, segment: str) -> List[int]:
+        """Encode regular text segment (no special tokens), pretokenizes then applies BPE encoding."""
+        tokens = []
+        matches = re.finditer(PAT, segment)
+        for match in matches:
+            word_bytes = match.group().encode("utf-8")
+            tokens.extend(self._encode_word(word_bytes))
+        return tokens
 
 
     def _encode_word(self, w_bytes: bytes) -> List[int]:
@@ -122,19 +139,24 @@ class BPETokenizer:
         return current_encoding
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        """Lazily encode an iterable of strings into a stream of token IDs."""
         for element in iterable:
             for token_id in self.encode(element):
-             yield token_id
+                yield token_id
 
 
     def decode(self, ids: List[int]) -> str:
         return b''.join(self.vocab[id] for id in ids).decode('utf-8')
 
+    def decode_debug(self, ids: List[int]) -> List[str]:
+        return [self.vocab[id].decode('utf-8') for id in ids]
+
 
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
-        vocab = pickle.load(vocab_filepath)
-        merges = pickle.load(merges_filepath)
+        with open(vocab_filepath, "rb") as vf, open(merges_filepath, "rb") as mf:
+            vocab = pickle.load(vf)
+            merges = pickle.load(mf)
         return cls(vocab, merges, special_tokens)
 
     @staticmethod
@@ -158,12 +180,14 @@ def _pretokenize_chunk(input_path: str, start: int, end: int, special_tok_pat: s
         f.seek(start)
         chunk = f.read(end - start).decode("utf-8", errors="ignore")
     chunk_seq = []
-    # Ensuring no tokenization across special tokens.
-    segments: List[str] = re.split(special_tok_pat, chunk)
-    for seg in segments:
-        words = re.findall(PAT, seg)
-        for w in words:
-            chunk_seq.append(w)
+    
+    # Ensure no tokenization across special tokens.
+    # Iterators for minimal memory usage.
+    for seg in re.splititer(special_tok_pat, chunk):
+        for w in re.finditer(PAT, seg):
+            chunk_seq.append(w.group())
+
+    del chunk
     return chunk_seq    
 
 def train_bpe(input_path: str, vocab_size: int, special_tokens: List[str], n_processes: int = 1):
@@ -173,15 +197,17 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: List[str], n_pro
 
     Args:
         input_path: Path to UTF-8 text containing training data.
-        vocab_size: Target vocabulary size (includes bytes, merges, and special tokens).
-        special_tokens: Tokens to append to the vocab; expected format `<|TOKEN|>`.
+        vocab_size: Target vocabulary size.
+        special_tokens: Special tokens which should not be tokenized; expected format `<|TOKEN|>`.
         n_processes: Number of processes to use for preprocessing.
     Returns:
-        vocab: Mapping from token id to token bytes.
+        vocab: Mapping from token id to token bytes. Does not include special tokens.
         merges: Ordered list of merge pairs `(left_bytes, right_bytes)` in creation order.
     """
 
-    
+    if special_tokens is None:
+        special_tokens = ["<|endoftext|>"]
+
     logger.info("Reading training data from %s", input_path)
 
     # Init data structures
@@ -198,10 +224,7 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: List[str], n_pro
         boundaries = find_chunk_boundaries(f, b"<|endoftext|>")
         logger.info("Found %d chunk boundaries", len(boundaries))
 
-        # TODO: Parallelize the preprocessing
         # ------- Preprocessing -------
-        # Split into chunks, split between special tokens
-        # and pretokenize the subsegments.
         raw_word_sequence = []
         if n_processes > 1:
             logger.info("Using %d processes for preprocessing", n_processes)
@@ -222,24 +245,21 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: List[str], n_pro
             for start, end in zip(boundaries[:-1], boundaries[1:]):
                 raw_word_sequence.extend(_pretokenize_chunk(input_path, start, end, special_tok_pat))
 
+        logger.info("Found %d words in the corpus", len(raw_word_sequence))
         _initialize_word_map(word_map, idx_to_word, raw_word_sequence)
+        logger.info("Initialized %d distinct words", len(word_map))
         _initialize_pairs_map(pairs_map, word_map)
+        logger.info("Initialized %d distinct pairs", len(pairs_map))
 
         # Feeding all pairs into a list and creating heap
         for pair, data in pairs_map.items():
             merge_job = MergeJob.build(data.freq, pair)
             pairs_heap.append(merge_job)
         heapq.heapify(pairs_heap)
-        logger.info("Initialized %d distinct pairs", len(pairs_map))
 
     # ------ Merging ------
-    current_index = _run_merges(pairs_heap, pairs_map, merges, word_map, vocab, idx_to_word, vocab_size)
-
-    # We add special tokens into the vocab
-    st_bytes = [t.encode('utf-8') for t in special_tokens]
-    for t in st_bytes:
-        vocab[current_index] = t
-        current_index += 1
+    actual_vocab_size = vocab_size - len(special_tokens)
+    _ = _run_merges(pairs_heap, pairs_map, merges, word_map, vocab, idx_to_word, actual_vocab_size)
 
     logger.info("Training finished with %d merges and final vocab size %d", len(merges), len(vocab))
 
@@ -265,7 +285,7 @@ def _initialize_pairs_map(pairs_map: Dict[Tuple[int, int], PairData],
             if p not in pairs_map:
                 pairs_map[p] = PairData(freq, set([data.idx]))
             else:
-                pairs_map[p].freq += freq
+                pairs_map[p].freq += (freq * data.count)
                 pairs_map[p].locations.add(data.idx)
 
 def _run_merges(pairs_heap: List[MergeJob],
@@ -281,6 +301,7 @@ def _run_merges(pairs_heap: List[MergeJob],
     # ------ Merging ------
     # Something to be merged and we have room to expand vocab
     while len(pairs_heap) > 0 and current_index < vocab_size:
+
         merge_job = heapq.heappop(pairs_heap)
         pair = merge_job.pair
         freq = merge_job.freq
@@ -291,6 +312,9 @@ def _run_merges(pairs_heap: List[MergeJob],
                 merge_job_updated = MergeJob.build(pairs_map[pair].freq, pair)
                 heapq.heappush(pairs_heap, merge_job_updated)
             continue
+
+        if (current_index % 1000) == 0:
+            logger.info("Running merge: %d of %d", current_index, vocab_size)
 
         # Debug, check if we just added something already in the vocab
         if vocab[pair[0]] + vocab[pair[1]] in vocab.values():

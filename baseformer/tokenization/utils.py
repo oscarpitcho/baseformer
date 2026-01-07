@@ -157,7 +157,7 @@ def remove_special_tokens(text: str, special_tokens: List[str]) -> str:
 def find_chunk_boundaries(
     file: BinaryIO,
     split_special_token: bytes,
-    chunk_size: int = 500 * 1024 * 1024 # 500MB
+    chunk_size: int = 10 * 1024 * 1024 # 10MB
 ) -> list[int]:
     """
     Chunk the file into parts that can be counted independently.

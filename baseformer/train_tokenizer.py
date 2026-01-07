@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """
-Simple CLI to train a byte-pair encoder tokenizer.
+Simple script to train a byte-pair encoder tokenizer.
+Special tokens are not added to the vocabulary.
 
 Example:
-    uv run python train_tokenizer.py --input_path ../data/TinyStoriesV2-GPT4-valid.txt \
+    uv run python train_tokenizer.py --input_path ../data/TinyStoriesV2-GPT4-train.txt \
                               --output-dir ../data/ \
-                              --vocab_size 10000 \
+                              --vocab_size 10048 \
                               --n_processes 16 \
-                              --special-token "<|special_token|>"
+                              --ds_name "ts"
+or for openwebtext:
+    uv run python train_tokenizer.py --input_path ../data/owt_train.txt \
+                            --output-dir ../data/ \
+                            --vocab_size 32064 \
+                            --n_processes 16 \
+                            --ds_name "owt"
 """
 
 from __future__ import annotations
@@ -30,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vocab_size", default=10000, type=int, help="Final vocabulary size.")
     parser.add_argument("--n_processes", default=1, type=int, help="Number of processes to use for preprocessing.")
     parser.add_argument("--special-token", action="append", dest="special_tokens",
-        default=["<|endoftext|>"], help="Special token to include (repeatable). Always includes <|endoftext|> as default: <|endoftext|>")
+        default=["<|endoftext|>"], help="Special token to consider when doing merging (repeatable). Always includes <|endoftext|> as default.")
     parser.add_argument("--output-dir", type=Path, default=Path("./data/"),
         help="Directory to store vocab and merges pickles. Default: current dir.")
     return parser.parse_args()

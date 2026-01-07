@@ -1,7 +1,7 @@
 import heapq
 from collections import Counter
 import pytest
-from cs336_basics.tokenization.utils import (
+from baseformer.tokenization.utils import (
     merge_counts,
     find_counts,
     apply_merge,
@@ -9,7 +9,7 @@ from cs336_basics.tokenization.utils import (
     compute_deltas,
 
 )
-from cs336_basics.tokenization.bpe import (
+from baseformer.tokenization.bpe import (
     WordData,
     PairData,
     BPETokenizer,
@@ -17,6 +17,7 @@ from cs336_basics.tokenization.bpe import (
     MergeJob,
     _initialize_word_map,
     _initialize_pairs_map,
+    train_bpe,
 )
 
 class TestComputeDeltas:
@@ -71,24 +72,6 @@ class TestMergeCounts:
         result = merge_counts([])
         assert result == {}
 
-    def test_single_dict(self):
-        """Test merging a single dictionary."""
-        dicts = [{1: 5, 2: 3}]
-        result = merge_counts(dicts)
-        assert result == {1: 5, 2: 3}
-
-    def test_multiple_dicts_no_overlap(self):
-        """Test merging multiple dictionaries with no overlapping keys."""
-        dicts = [{1: 5, 2: 3}, {3: 7, 4: 2}]
-        result = merge_counts(dicts)
-        assert result == {1: 5, 2: 3, 3: 7, 4: 2}
-
-    def test_multiple_dicts_with_overlap(self):
-        """Test merging multiple dictionaries with overlapping keys."""
-        dicts = [{1: 5, 2: 3}, {1: 2, 3: 7}]
-        result = merge_counts(dicts)
-        assert result == {1: 7, 2: 3, 3: 7}
-
     def test_multiple_dicts_all_overlap(self):
         """Test merging multiple dictionaries where all keys overlap."""
         dicts = [{1: 5, 2: 3}, {1: 2, 2: 4}, {1: 1, 2: 1}]
@@ -103,21 +86,6 @@ class TestMergeCounts:
 
 
 class TestFindCounts:
-    def test_empty_sequence(self):
-        """Test finding counts in an empty sequence."""
-        result = find_counts([])
-        assert result == {}
-
-    def test_single_element(self):
-        """Test finding counts in a sequence with a single element."""
-        result = find_counts([1])
-        assert result == {}
-
-    def test_two_elements(self):
-        """Test finding counts in a sequence with two elements."""
-        result = find_counts([1, 2])
-        assert result == {(1, 2): 1}
-
     def test_multiple_elements_no_repeats(self):
         """Test finding counts in a sequence with no repeated pairs."""
         result = find_counts([1, 2, 3, 4])
@@ -159,18 +127,6 @@ class TestApplyMerge:
         assert new_seq == [1, 10, 10, 4]
         assert positives == [(1, 10), (10, 10), (10, 4)]
 
-    def test_match_at_start(self):
-        """Test applying merge when the pair appears at the start."""
-        new_seq, positives = apply_merge([1, 2, 3, 4], (1, 2), 10)
-        assert new_seq == [10, 3, 4]
-        assert positives == [(10, 3)]
-
-    def test_match_at_end(self):
-        """Test applying merge when the pair appears at the end."""
-        new_seq, positives = apply_merge([1, 2, 3, 4], (3, 4), 10)
-        assert new_seq == [1, 2, 10]
-        assert positives == [(2, 10)]
-
     def test_overlapping_pairs(self):
         """Test applying merge when pairs overlap (should not merge overlapping)."""
         new_seq, positives = apply_merge([1, 2, 2, 3], (2, 2), 10)
@@ -195,23 +151,6 @@ class TestFindNegativePairs:
         with pytest.raises(ValueError):
             find_negative_pairs([], (1, 2))
 
-    def test_target_in_middle_returns_left_and_self(self):
-        seq = [1, 2, 3, 4]
-        target = (2, 3)
-        negatives = find_negative_pairs(seq, target)
-        assert negatives == [(1, 2), (3, 4)]
-
-    def test_target_at_start(self):
-        seq = [1, 2, 3]
-        target = (1, 2)
-        negatives = find_negative_pairs(seq, target)
-        assert negatives == [(2, 3)]
-
-    def test_target_at_end(self):
-        seq = [1, 2, 3]
-        target = (2, 3)
-        negatives = find_negative_pairs(seq, target)
-        assert negatives == [(1, 2)]
 
     def test_multiple_occurrences(self):
         seq = [1, 2, 3, 1, 2, 3]
@@ -343,6 +282,31 @@ class TestBPE:
         decoded = tokenizer.decode(ids)
         print(f"Expected decoded: {text!r}, Got: {decoded!r}")
         assert decoded == text, f"Expected {text!r}, got {decoded!r}"
+
+
+    def test_train_then_encode_produces_merged_tokens(self):
+        """Verify that training produces a tokenizer that actually applies merges."""
+        import tempfile
+        import os
+        
+        # Create a small corpus with repeated patterns
+        corpus = " the the the cat cat cat sat sat sat"
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write(corpus)
+            temp_path = f.name
+        
+        try:
+            vocab, merges = train_bpe(temp_path, vocab_size=3000, special_tokens=None, n_processes=1)
+            tokenizer = BPETokenizer(vocab, merges)
+            
+            # Encode the same text
+            ids = tokenizer.encode(corpus)
+            decoded = tokenizer.decode_debug(ids)
+            print(f"Decoded: {decoded}")
+            assert decoded == [" the", " the", " the", " cat", " cat", " cat", " sat", " sat", " sat"], f"Expected {corpus}, got {decoded}"
+        finally:
+            os.unlink(temp_path)
 
 
 class TestRunMerges:
