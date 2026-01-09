@@ -11,6 +11,7 @@ from .adapters import (
     run_swiglu,
     run_rmsnorm,
     run_scaled_dot_product_attention,
+    run_softmax,
     run_transformer_block,
     run_transformer_lm,
     run_linear,
@@ -60,6 +61,82 @@ def test_scaled_dot_product_attention(numpy_snapshot, q, k, v, mask):
         actual_output,
         atol=1e-6,
     )
+
+def test_scaled_dot_product_attention_identity_QKV():
+    """When Q = K = V = I, attention should return softmax-weighted identity."""
+    batch_size = 3
+    d_k = 4
+    I = torch.eye(d_k)
+    
+    # Q = K = V = I (identity matrix), batched
+    Q = I.unsqueeze(0).expand(batch_size, d_k, d_k)  # (batch, d_k, d_k)
+    K = I.unsqueeze(0).expand(batch_size, d_k, d_k)
+    V = I.unsqueeze(0).expand(batch_size, d_k, d_k)
+    
+    output = run_scaled_dot_product_attention(Q=Q, K=K, V=V, mask=None)
+    
+    # QK^T / sqrt(d_k) = I / sqrt(d_k), then softmax per row
+    scores = I / (d_k ** 0.5)
+    expected_attn = run_softmax(scores, dim=-1)
+    
+    # output = attn_weights @ V = attn_weights @ I = attn_weights
+    expected_output = expected_attn.unsqueeze(0).expand(batch_size, d_k, d_k)
+    
+    torch.testing.assert_close(output, expected_output, atol=1e-6, rtol=1e-5)
+
+
+def test_scaled_dot_product_attention_identity_mask():
+    """With Q = K = V = I and identity mask, output should be I."""
+    batch_size = 3
+    d_k = 4
+    I = torch.eye(d_k)
+    
+    Q = I.unsqueeze(0).expand(batch_size, d_k, d_k)  # (batch, d_k, d_k)
+    K = I.unsqueeze(0).expand(batch_size, d_k, d_k)
+    V = I.unsqueeze(0).expand(batch_size, d_k, d_k)
+    
+    # Identity mask: only attend to diagonal (each query attends only to its matching key)
+    mask = I.bool().unsqueeze(0).expand(batch_size, d_k, d_k)  # (batch, d_k, d_k)
+    
+    output = run_scaled_dot_product_attention(Q=Q, K=K, V=V, mask=mask)
+    
+    # With identity mask:
+    # - Off-diagonal scores become -inf, then 0 after softmax
+    # - Each row has exactly one valid position, so softmax gives 1 there
+    # - attention_weights = I
+    # - output = I @ V = I @ I = I
+    expected_output = I.unsqueeze(0).expand(batch_size, d_k, d_k)
+    
+    torch.testing.assert_close(output, expected_output, atol=1e-6, rtol=1e-5)
+
+
+def test_scaled_dot_product_attention_rank1_KV():
+    """With rank-1 K and V matrices, output is the V vector replicated for each query."""
+    batch_size = 3
+    n_queries = 2
+    n_keys = 4
+    d_k = 8
+    
+    # Arbitrary query vectors (different from each other), batched
+    Q = torch.randn(batch_size, n_queries, d_k)
+    
+    # K is rank-1: all key vectors are identical
+    k_vec = torch.randn(d_k)
+    K = k_vec.view(1, 1, d_k).expand(batch_size, n_keys, d_k)  # (batch, n_keys, d_k)
+    
+    # V is rank-1: all value vectors are identical
+    v_vec = torch.randn(d_k)
+    V = v_vec.view(1, 1, d_k).expand(batch_size, n_keys, d_k)  # (batch, n_keys, d_k)
+    
+    output = run_scaled_dot_product_attention(Q=Q, K=K, V=V, mask=None)
+    
+    # Each query has identical dot products with all keys (since all keys are the same)
+    # → softmax gives uniform weights (1/n_keys each)
+    # → weighted sum of identical V vectors = v_vec
+    # → output is v_vec replicated for each query
+    expected_output = v_vec.view(1, 1, d_k).expand(batch_size, n_queries, d_k)
+    
+    torch.testing.assert_close(output, expected_output, atol=1e-6, rtol=1e-5)
 
 
 def test_4d_scaled_dot_product_attention(numpy_snapshot, q, k, v, mask):

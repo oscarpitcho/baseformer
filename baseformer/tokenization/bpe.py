@@ -1,7 +1,7 @@
 """
 Logic to Tokenize using the BPE algorithm as implemented in GPT2.
 Supports training from scratch, encoding, decoding, and introduction of special
-tokens defined after tokenizer trainging.
+tokens defined after tokenizer training.
 
 Implementation Outline:
 - The Pair Map: Stores and frequency of each pair and words where it occurs
@@ -15,7 +15,7 @@ https://github.com/karpathy/minbpe/tree/master
 
 import heapq
 import logging
-from typing import Any, List, Tuple, Set, Dict, Iterable, Iterator
+from typing import List, Tuple, Set, Dict, Iterable, Iterator
 import regex as re
 import pickle
 import multiprocessing as mp
@@ -35,7 +35,7 @@ class MergeJob:
     as a negative number as python heaps are min-only. Should be built
     using the build method, and only freq should be accessed."""
     _freq_internal: int
-    pair: Tuple[int, int] 
+    pair: Tuple[int, int]
 
     @property
     def freq(self) -> int:
@@ -49,7 +49,7 @@ class MergeJob:
 class WordData:
     count: int # Total occurences in the corpus
     encoding: List[int]
-    idx: int 
+    idx: int
 
 @dataclass
 class PairData:
@@ -57,9 +57,25 @@ class PairData:
     locations: Set[int] # Frozen after generation
 
 class BPETokenizer:
+    def __init__(
+        self,
+        vocab: Dict[int, bytes],
+        merges: List[Tuple[bytes, bytes]],
+        special_tokens: List[str] | None = None
+        ):
+        """
+        Initialize a BPE tokenizer from a pretrained vocab and merges.
 
-    def __init__(self, vocab: Dict[int, bytes], merges: List[Tuple[bytes, bytes]], special_tokens: List[str] | None = None):
-        """Default special tokens are <|endoftext|>, additional special tokens can be added."""
+        Special tokens must be specified even if they were provided during training,
+        as they are not stored in the vocab/merges files. The <|endoftext|> token is
+        always included by default.
+
+        Args:
+            vocab: Mapping from token ID to token bytes.
+            merges: Ordered list of merge pairs (left_bytes, right_bytes).
+            special_tokens: Additional special tokens to recognize during encoding.
+        """
+
         self.vocab = vocab
         self.merges = merges
         self.merges_dict = dict(zip(merges, range(len(merges))))
@@ -68,18 +84,30 @@ class BPETokenizer:
         if special_tokens is not None:
             self.special_tokens.update(special_tokens)
         self.special_tokens.add("<|endoftext|>")
-        self.special_tok_pat = "(" + '|'.join(re.escape(token) for token in self.special_tokens) + ")"
+        self.special_tok_pat = "(" + "|".join(re.escape(token) for token in self.special_tokens) + ")"
 
         self.special_tokens_reverse_map: Dict[bytes, int] = {}
 
         # Special token handling
         i = len(self.vocab)
         for st in self.special_tokens:
-                self.special_tokens_reverse_map[st.encode('utf-8')] = len(self.vocab)
-                self.vocab[i] = st.encode('utf-8')
-                i += 1
-        
+            self.special_tokens_reverse_map[st.encode("utf-8")] = len(self.vocab)
+            self.vocab[i] = st.encode("utf-8")
+            i += 1
+            
     def encode(self, text: str) -> List[int]:
+        """
+        Encode a text string into a list of token IDs.
+
+        Handles special tokens by splitting the text around them and encoding
+        each segment separately. Special tokens are mapped directly to their IDs.
+
+        Args:
+            text: The input string to encode.
+
+        Returns:
+            List of integer token IDs.
+        """
         if self.special_tok_pat is None:
             return self._encode_segment(text)
         else:
@@ -98,6 +126,23 @@ class BPETokenizer:
         return res
 
 
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        """
+        Lazily encode an iterable of strings into a stream of token IDs.
+
+        Useful for processing large datasets without loading everything into memory.
+
+        Args:
+            iterable: An iterable of strings to encode (e.g., file lines, generator).
+
+        Yields:
+            Token IDs one at a time.
+        """
+        for element in iterable:
+            for token_id in self.encode(element):
+                yield token_id
+
+
     def _encode_segment(self, segment: str) -> List[int]:
         """Encode regular text segment (no special tokens), pretokenizes then applies BPE encoding."""
         tokens = []
@@ -109,7 +154,7 @@ class BPETokenizer:
 
 
     def _encode_word(self, w_bytes: bytes) -> List[int]:
-        """Encodes a sequece of bytes into the corresponding sequence of token IDs"""
+        """Encodes a sequence of bytes into the corresponding sequence of token IDs."""
         current_encoding = list(w_bytes)
         while True:
             pairs = find_counts(current_encoding)
@@ -138,18 +183,12 @@ class BPETokenizer:
 
         return current_encoding
 
-    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
-        """Lazily encode an iterable of strings into a stream of token IDs."""
-        for element in iterable:
-            for token_id in self.encode(element):
-                yield token_id
-
 
     def decode(self, ids: List[int]) -> str:
-        return b''.join(self.vocab[id] for id in ids).decode('utf-8')
+        return b"".join(self.vocab[id] for id in ids).decode("utf-8")
 
     def decode_debug(self, ids: List[int]) -> List[str]:
-        return [self.vocab[id].decode('utf-8') for id in ids]
+        return [self.vocab[id].decode("utf-8") for id in ids]
 
 
     @classmethod
@@ -163,7 +202,7 @@ class BPETokenizer:
     def prettify_vocab(vocab: dict[int, bytes]) -> dict[str, str]:
         """Converts the vocabulary from bytes (with non json-serializable bytes) to printable characters."""
         enc = gpt2_bytes_to_unicode()        # byte -> printable char
-        return {str(tok_id): ''.join(enc[b] for b in token_bytes)
+        return {str(tok_id): "".join(enc[b] for b in token_bytes)
                 for tok_id, token_bytes in vocab.items()}
 
     @staticmethod
@@ -171,16 +210,15 @@ class BPETokenizer:
         """Converts the merges from bytes (with non json-serializable bytes) to printable characters."""
         enc = gpt2_bytes_to_unicode()
         def pretty_bytes(b: bytes) -> str:
-            return ''.join(enc[x] for x in b)
+            return "".join(enc[x] for x in b)
         return [(pretty_bytes(left), pretty_bytes(right)) for left, right in merges]
-            
 
 def _pretokenize_chunk(input_path: str, start: int, end: int, special_tok_pat: str) -> List[str]:
     with open(input_path, "rb") as f:
         f.seek(start)
         chunk = f.read(end - start).decode("utf-8", errors="ignore")
     chunk_seq = []
-    
+
     # Ensure no tokenization across special tokens.
     # Iterators for minimal memory usage.
     for seg in re.splititer(special_tok_pat, chunk):
@@ -191,7 +229,6 @@ def _pretokenize_chunk(input_path: str, start: int, end: int, special_tok_pat: s
     return chunk_seq    
 
 def train_bpe(input_path: str, vocab_size: int, special_tokens: List[str], n_processes: int = 1):
-
     """
     Train a byte pair encoding (BPE) tokenizer on a text file.
 
@@ -218,7 +255,7 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: List[str], n_pro
     vocab: Dict[int, bytes] = {i: bytes([i]) for i in range(256)}
     pairs_heap: List[MergeJob] = []
 
-    special_tok_pat = '|'.join(re.escape(token) for token in special_tokens)
+    special_tok_pat = "|".join(re.escape(token) for token in special_tokens)
 
     with open(input_path, "rb") as f:
         boundaries = find_chunk_boundaries(f, b"<|endoftext|>")
@@ -259,7 +296,7 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: List[str], n_pro
 
     # ------ Merging ------
     actual_vocab_size = vocab_size - len(special_tokens)
-    _ = _run_merges(pairs_heap, pairs_map, merges, word_map, vocab, idx_to_word, actual_vocab_size)
+    _run_merges(pairs_heap, pairs_map, merges, word_map, vocab, idx_to_word, actual_vocab_size)
 
     logger.info("Training finished with %d merges and final vocab size %d", len(merges), len(vocab))
 
@@ -307,7 +344,7 @@ def _run_merges(pairs_heap: List[MergeJob],
         freq = merge_job.freq
 
         # Node is stale, adjust, push and try again
-        if pairs_map[pair].freq != freq: 
+        if pairs_map[pair].freq != freq:
             if pairs_map[pair].freq > 0:
                 merge_job_updated = MergeJob.build(pairs_map[pair].freq, pair)
                 heapq.heappush(pairs_heap, merge_job_updated)
@@ -318,7 +355,8 @@ def _run_merges(pairs_heap: List[MergeJob],
 
         # Debug, check if we just added something already in the vocab
         if vocab[pair[0]] + vocab[pair[1]] in vocab.values():
-            logger.warning("Pair %s already in vocab, heap freq: %d, pair freq: %d", vocab[pair[0]] + vocab[pair[1]], pairs_heap[0].freq, pairs_map[pair].freq)
+            logger.warning("Pair %s already in vocab, heap freq: %d, pair freq: %d",
+                                vocab[pair[0]] + vocab[pair[1]], pairs_heap[0].freq, pairs_map[pair].freq)
             raise ValueError("Pair already in vocab")
 
         # Create new token and update data structures:
@@ -354,16 +392,13 @@ def _run_merges(pairs_heap: List[MergeJob],
         for pair, p_data in total_delta.items():
             if pair not in pairs_map: # New pair from merge
                 pairs_map[pair] = p_data
-            else: 
+            else:
                 pairs_map[pair].freq += p_data.freq
                 # Pair no longer appears, no merging jobs
                 if pairs_map[pair].freq <= 0:
                     continue
-               
+
             new_node = MergeJob.build(pairs_map[pair].freq, pair)
             heapq.heappush(pairs_heap, new_node)
 
     return current_index
-
-
-

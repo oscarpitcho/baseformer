@@ -211,7 +211,7 @@ wheels = [
 ]
 
 [[package]]
-name = "cs336-basics"
+name = "baseformer"
 version = "1.0.6"
 source = { editable = "." }
 dependencies = [

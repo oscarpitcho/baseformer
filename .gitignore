@@ -2,6 +2,13 @@
 
 data/
 
+#Slurm job output
+slurm-*.out
+slurm-*.err
+slurm-*.log
+slurm-*.status
+
+
 # Scalene
 scalene-profile.json
 scalene-profile.html

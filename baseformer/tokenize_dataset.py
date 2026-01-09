@@ -13,8 +13,8 @@ or for openwebtext:
     uv run python tokenize_dataset.py \
         --vocab ../data/owt_vocab.pkl \
         --merges ../data/owt_merges.pkl \
-        --input_path ../data/owt_valid.txt \
-        --output_path ../data/owt_valid_tokens.npz
+        --input_path ../data/owt_train.txt \
+        --output_path ../data/owt_train_tokens.npz
 """
 
 from __future__ import annotations
