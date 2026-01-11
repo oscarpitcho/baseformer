@@ -8,6 +8,7 @@ from torch.nn import Module
 from jaxtyping import Float, Bool, Int
 from einops import einsum, rearrange
 
+from baseformer.nn.position import RotaryPositionalEmbedding
 from baseformer.nn.utils import softmax
 from baseformer.nn.linear import Linear
 
@@ -17,7 +18,7 @@ class MultiHeadSelfAttention(Module):
     Multi-head self-attention layer.
 
     Applies parallel attention heads with RoPE then combines the results
-    via a learned output projection W_o.
+    via a learned output projection W_o. Rope 
 
     Attributes:
         d_model: Model dimension.
@@ -25,13 +26,14 @@ class MultiHeadSelfAttention(Module):
         head_dim: Dimension of each attention head (d_model // n_heads).
         QKV_proj: Combined projection for queries, keys, and values.
         O_proj: Output projection.
-        rope: Optional RoPE module (set externally).
+        rope: Optional RoPE module.
     """
 
     def __init__(
         self,
         d_model: int,
         n_heads: int,
+        rope: RotaryPositionalEmbedding = None,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ):
@@ -39,6 +41,7 @@ class MultiHeadSelfAttention(Module):
         Args:
             d_model: Model dimension. Must be divisible by n_heads.
             n_heads: Number of parallel attention heads.
+            rope: Optional RoPE module for rotary positional embeddings.
             device: Device to place the weights on.
             dtype: Data type for the weights.
         """
@@ -50,7 +53,10 @@ class MultiHeadSelfAttention(Module):
         self.QKV_proj = Linear(d_model, 3 * d_model, device=device, dtype=dtype)
         self.O_proj = Linear(d_model, d_model, device=device, dtype=dtype)
 
-        self.rope = None
+        self.rope = rope
+
+        if self.rope and (self.rope.d_k != self.head_dim):
+            raise ValueError(f"RoPE dimension must match head dimension, got {self.rope.d_k} and {self.head_dim}")
 
     def forward(
         self,

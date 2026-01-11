@@ -17,8 +17,10 @@ from baseformer.nn.norm import RMSNorm
 from baseformer.nn.activations import SwiGLU
 from baseformer.nn.position import RotaryPositionalEmbedding
 from baseformer.nn.attention import scaled_dot_product_attention, MultiHeadSelfAttention
-from baseformer.nn.utils import softmax
-
+from baseformer.nn.utils import softmax, loss_cross_ent, clip_gradients_
+from baseformer.nn.transformer import TransformerBlock, TransformerLM
+from baseformer.optim.adamw import AdamW
+from baseformer.optim.scheduler import get_lr_cosine_schedule
 
 def run_linear(
     d_in: int,
@@ -230,10 +232,10 @@ def run_transformer_block(
     d_model: int,
     num_heads: int,
     d_ff: int,
-    max_seq_len: int,
-    theta: float,
     weights: dict[str, Tensor],
     in_features: Float[Tensor, " batch sequence_length d_model"],
+    max_seq_len: int | None = None,
+    theta: float | None = None,
 ) -> Float[Tensor, " batch sequence_length d_model"]:
     """
     Given the weights of a pre-norm Transformer block and input features,
@@ -278,13 +280,13 @@ def run_transformer_block(
                 Shape is (d_model,).
             - `ffn.w1.weight`
                 Weight of the first linear transformation in the FFN.
-                Shape is (d_model, d_ff).
+                Shape is (d_ff, d_model).
             - `ffn.w2.weight`
                 Weight of the second linear transformation in the FFN.
-                Shape is (d_ff, d_model).
+                Shape is (d_model, d_ff).
             - `ffn.w3.weight`
                 Weight of the third linear transformation in the FFN.
-                Shape is (d_model, d_ff).
+                Shape is (d_ff, d_model).
             - `ln2.weight`
                 Weights of affine transform for the second RMSNorm
                 applied in the transformer block.
@@ -296,7 +298,31 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    rope = None
+    if theta is not None and max_seq_len is not None:
+        rope = RotaryPositionalEmbedding(theta, d_model//num_heads, max_seq_len)
+    transformer = TransformerBlock(d_model, num_heads, d_ff, rope)
+
+    Q_proj_weight = weights["attn.q_proj.weight"]
+    K_proj_weight = weights["attn.k_proj.weight"]
+    V_proj_weight = weights["attn.v_proj.weight"]
+    O_proj_weight = weights["attn.output_proj.weight"]
+    ln1_weight = weights["ln1.weight"]
+    ln2_weight = weights["ln2.weight"]
+    ffn_w1_weight = weights["ffn.w1.weight"]
+    ffn_w2_weight = weights["ffn.w2.weight"]
+    ffn_w3_weight = weights["ffn.w3.weight"]
+
+    QKV_proj_weight = torch.cat([Q_proj_weight, K_proj_weight, V_proj_weight], dim=0)
+    transformer.mha.QKV_proj.weights.data = QKV_proj_weight
+    transformer.mha.O_proj.weights.data = O_proj_weight
+
+    transformer.norm1.gamma.data = ln1_weight
+    transformer.norm2.gamma.data = ln2_weight
+    transformer.ffn.w1.weights.data = ffn_w1_weight
+    transformer.ffn.w2.weights.data = ffn_w2_weight
+    transformer.ffn.w3.weights.data = ffn_w3_weight
+    return transformer(in_features)
 
 
 def run_transformer_lm(
@@ -354,13 +380,13 @@ def run_transformer_lm(
                 Shape is (d_model,).
             - `layers.{num_layers}.ffn.w1.weight`
                 Weight of the first linear transformation in the FFN.
-                Shape is (d_model, d_ff).
+                Shape is (d_ff, d_model).
             - `layers.{num_layers}.ffn.w2.weight`
                 Weight of the second linear transformation in the FFN.
-                Shape is (d_ff, d_model).
+                Shape is (d_model, d_ff).
             - `layers.{num_layers}.ffn.w3.weight`
                 Weight of the third linear transformation in the FFN.
-                Shape is (d_model, d_ff).
+                Shape is (d_ff, d_model).
             - `layers.{num_layers}.ln2.weight`
                 Weights of affine transform for the second RMSNorm
                 applied in the transformer block.
@@ -378,7 +404,43 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    # Create RoPE (shared across all layers)
+    head_dim = d_model // num_heads
+    rope = RotaryPositionalEmbedding(rope_theta, head_dim, context_length)
+
+    # Instantiate TransformerLM
+    model = TransformerLM(vocab_size, d_model, num_layers, num_heads, d_ff, rope)
+
+    # Set embedding weights
+    model.word_embedding.weights.data = weights["token_embeddings.weight"]
+
+    # Set transformer block weights
+    for i in range(num_layers):
+        layer = model.network.modules[i][1]  # (index, module) tuple
+
+        # Load attention weights
+        Q_proj = weights[f"layers.{i}.attn.q_proj.weight"]
+        K_proj = weights[f"layers.{i}.attn.k_proj.weight"]
+        V_proj = weights[f"layers.{i}.attn.v_proj.weight"]
+        QKV_proj = torch.cat([Q_proj, K_proj, V_proj], dim=0)
+        layer.mha.QKV_proj.weights.data = QKV_proj
+        layer.mha.O_proj.weights.data = weights[f"layers.{i}.attn.output_proj.weight"]
+
+        # Load norm weights
+        layer.norm1.gamma.data = weights[f"layers.{i}.ln1.weight"]
+        layer.norm2.gamma.data = weights[f"layers.{i}.ln2.weight"]
+
+        # Load FFN weights
+        layer.ffn.w1.weights.data = weights[f"layers.{i}.ffn.w1.weight"]
+        layer.ffn.w2.weights.data = weights[f"layers.{i}.ffn.w2.weight"]
+        layer.ffn.w3.weights.data = weights[f"layers.{i}.ffn.w3.weight"]
+
+    # Set final norm and LM head weights
+    model.ln_final.gamma.data = weights["ln_final.weight"]
+    model.lm_decoder.weights.data = weights["lm_head.weight"]
+
+    # Forward pass
+    return model(in_indices)
 
 
 def run_rmsnorm(
@@ -461,21 +523,21 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
 
 
 def run_cross_entropy(
-    inputs: Float[Tensor, " batch_size vocab_size"], targets: Int[Tensor, " batch_size"]
+    inputs: Float[Tensor, " seq_length vocab_size"], targets: Int[Tensor, " seq_length"]
 ) -> Float[Tensor, ""]:
     """Given a tensor of inputs and targets, compute the average cross-entropy
     loss across examples.
 
     Args:
-        inputs (Float[Tensor, "batch_size vocab_size"]): inputs[i][j] is the
+        inputs (Float[Tensor, "seq_length vocab_size"]): inputs[i][j] is the
             unnormalized logit of jth class for the ith example.
-        targets (Int[Tensor, "batch_size"]): Tensor of shape (batch_size,) with the index of the correct class.
+        targets (Int[Tensor, "seq_length"]): Tensor of shape (seq_length,) with the index of the correct class.
             Each value must be between 0 and `num_classes - 1`.
 
     Returns:
-        Float[Tensor, ""]: The average cross-entropy loss across examples.
+        Float[Tensor, ""]: The average cross-entropy loss across the sequence.
     """
-    raise NotImplementedError
+    return loss_cross_ent(inputs, targets)
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
@@ -487,14 +549,14 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    clip_gradients_(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
@@ -522,7 +584,7 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
-    raise NotImplementedError
+    return get_lr_cosine_schedule(it, max_learning_rate, min_learning_rate, warmup_iters, cosine_cycle_iters)
 
 
 def run_save_checkpoint(

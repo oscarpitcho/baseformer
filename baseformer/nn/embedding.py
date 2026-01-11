@@ -13,7 +13,6 @@ class Embedding(Module):
     Lookup table for token embeddings.
 
     Maps integer token IDs to dense vectors by indexing into a learnable weight matrix.
-    This is the standard first layer in transformer architectures.
 
     Attributes:
         weights: Learnable embedding matrix of shape (n_emb, emb_dim).

@@ -43,6 +43,9 @@ def test_cross_entropy():
     )
     targets = torch.tensor([[1, 0, 2, 2], [4, 1, 4, 0]])
     expected = F.cross_entropy(inputs.view(-1, inputs.size(-1)), targets.view(-1))
+    
+    print(f" expected / real: {expected.detach().numpy() / run_cross_entropy(inputs.view(-1, inputs.size(-1)), targets.view(-1)).detach().numpy()}")
+    
     numpy.testing.assert_allclose(
         run_cross_entropy(inputs.view(-1, inputs.size(-1)), targets.view(-1)).detach().numpy(),
         expected.detach().numpy(),

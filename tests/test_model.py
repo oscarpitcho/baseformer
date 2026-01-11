@@ -239,15 +239,77 @@ def test_transformer_block(numpy_snapshot, ts_state_dict, in_embeddings, d_model
         d_model=d_model,
         num_heads=n_heads,
         d_ff=d_ff,
-        max_seq_len=n_keys,
-        theta=theta,
         weights=block_weights,
         in_features=in_embeddings,
+        max_seq_len=n_keys,
+        theta=theta,
     )
     numpy_snapshot.assert_match(
         actual_output,
         atol=1e-6,
     )
+
+
+
+def test_transformer_block_simple():
+    """
+    1D test case: x=2, all weights=1, no RoPE
+    
+    Expected computation:
+    - x = 2
+    - RMSNorm(2) = 2/2 = 1
+    - MHA(1) = 1 (identity attention, single token)
+    - h = 1 + 2 = 3 (first residual)
+    - RMSNorm(3) = 3/3 = 1
+    - SiLU(1) = 1 * sigmoid(1) = 1/(1+e^-1) ≈ 0.7311
+    - FFN(1) = w2 * (SiLU(w1*1) * (w3*1)) = 1 * (0.7311 * 1) ≈ 0.7311
+    - output = 0.7311 + 3 = 3.7311 (second residual uses x per code)
+    """
+    d_model = 1
+    num_heads = 1
+    d_ff = 1
+
+    # Input: x = 2, shape (batch=1, seq=1, d_model=1)
+    x = torch.tensor([[[2.0]]])
+
+    # All attention weights = 1, shape (d_model, d_model) = (1, 1)
+    attn_weight = torch.ones(1, 1)
+
+    # FFN weights all = 1
+    # w1: (d_ff, d_model) = (1, 1)
+    # w2: (d_model, d_ff) = (1, 1)
+    # w3: (d_ff, d_model) = (1, 1)
+    ffn_w1 = torch.ones(1, 1)
+    ffn_w2 = torch.ones(1, 1)
+    ffn_w3 = torch.ones(1, 1)
+
+    # RMSNorm gamma = 1
+    ln_weight = torch.ones(1)
+
+    weights = {
+        "attn.q_proj.weight": attn_weight,
+        "attn.k_proj.weight": attn_weight,
+        "attn.v_proj.weight": attn_weight,
+        "attn.output_proj.weight": attn_weight,
+        "ln1.weight": ln_weight,
+        "ln2.weight": ln_weight,
+        "ffn.w1.weight": ffn_w1,
+        "ffn.w2.weight": ffn_w2,
+        "ffn.w3.weight": ffn_w3,
+    }
+
+    # No RoPE (theta=None, max_seq_len=None)
+    output = run_transformer_block(
+        d_model=d_model,
+        num_heads=num_heads,
+        d_ff=d_ff,
+        weights=weights,
+        in_features=x,
+    )
+
+    expected = 3.7311
+    
+    numpy.testing.assert_allclose(output.item(), expected, atol=1e-4)
 
 
 def test_rmsnorm(numpy_snapshot, ts_state_dict, in_embeddings):
