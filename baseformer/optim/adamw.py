@@ -45,6 +45,7 @@ class AdamW(torch.optim.Optimizer):
         }
         super().__init__(params, defaults)
         self.state["step"] = 0
+        self.lr = lr
 
     @torch.no_grad()
     def step(self, lr_schedule: Callable[[int, float], float] = None) -> None:
@@ -60,9 +61,13 @@ class AdamW(torch.optim.Optimizer):
 
         Args:
             lr_schedule: Optional callable that takes step number and returns learning rate.
+
+        Returns:
+            The learning rate used for this step.
         """
         self.state["step"] += 1
         t = self.state["step"]
+        alpha = None
 
         for group in self.param_groups:
             beta1, beta2 = group["beta1"], group["beta2"]

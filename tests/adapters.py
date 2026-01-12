@@ -503,7 +503,25 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    from baseformer.data.dataset import TokenizedDataset
+    
+    # Sample random start indices (need context_length + 1 tokens for input and shifted labels)
+    max_start_idx = len(dataset) - context_length
+    start_indices = torch.randint(0, max_start_idx, (batch_size,))
+    
+    # Build batch as list of dicts (same format as TokenizedDataset.__getitem__)
+    batch = []
+    for idx in start_indices:
+        chunk = dataset[idx : idx + context_length + 1]
+        batch.append({
+            "input_ids": torch.from_numpy(chunk[:-1].copy()),
+            "labels": torch.from_numpy(chunk[1:].copy()),
+        })
+    
+    # Use TokenizedDataset.collate_fn to collate the batch
+    input_ids, labels = TokenizedDataset.collate_fn(batch)
+    
+    return input_ids.to(device), labels.to(device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:

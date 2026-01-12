@@ -185,10 +185,11 @@ class BPETokenizer:
 
 
     def decode(self, ids: List[int]) -> str:
-        return b"".join(self.vocab[id] for id in ids).decode("utf-8")
+        return b"".join(self.vocab[id] for id in ids).decode("utf-8", errors="replace")
 
     def decode_debug(self, ids: List[int]) -> List[str]:
-        return [self.vocab[id].decode("utf-8") for id in ids]
+        """Decode a list of token IDs into a list of strings."""
+        return [self.vocab[id].decode("utf-8", errors="replace") for id in ids]
 
 
     @classmethod

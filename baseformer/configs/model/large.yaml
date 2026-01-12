@@ -1,0 +1,6 @@
+# Large model configuration
+vocab_size: ${data.tokenizer.vocab_size}
+d_model: 1280
+num_layers: 36
+num_heads: 20
+d_ff: 5120

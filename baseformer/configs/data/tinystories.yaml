@@ -1,0 +1,13 @@
+# TinyStories dataset configuration
+# Trained with vocab_size=10048
+# N_Tokens: 554 658 421
+train_path: ${oc.env:DATA_DIR,/orcd/data/omarabu/001/opitcho/assignment1-basics/data}/ts_valid_tokens.npz
+val_path: ${oc.env:DATA_DIR,/orcd/data/omarabu/001/opitcho/assignment1-basics/data}/ts_valid_tokens.npz
+sequence_length: ${experiment.max_seq_len}
+
+# Tokenizer files for decoding
+tokenizer:
+  vocab_path: ${oc.env:DATA_DIR,/orcd/data/omarabu/001/opitcho/assignment1-basics/data}/ts_vocab.pkl
+  merges_path: ${oc.env:DATA_DIR,/orcd/data/omarabu/001/opitcho/assignment1-basics/data}/ts_merges.pkl
+  vocab_size: 10048
+

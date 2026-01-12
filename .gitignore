@@ -1,12 +1,19 @@
-# Project specific
+# Vscode
+.vscode/
 
+# Project specific
 data/
+!baseformer/configs/data/
+wandb/
+outputs/
+
 
 #Slurm job output
 slurm-*.out
 slurm-*.err
 slurm-*.log
 slurm-*.status
+*.out
 
 
 # Scalene

@@ -1,0 +1,6 @@
+# Tiny model for quick overfitting tests
+vocab_size: ${data.tokenizer.vocab_size}
+d_model: 16
+num_layers: 1
+num_heads: 2
+d_ff: 32

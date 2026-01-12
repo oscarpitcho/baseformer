@@ -1,0 +1,6 @@
+# 2.7B model configuration
+vocab_size: ${data.tokenizer.vocab_size}
+d_model: 2560
+num_layers: 32
+num_heads: 32
+d_ff: 10240

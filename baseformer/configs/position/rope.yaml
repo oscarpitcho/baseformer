@@ -1,0 +1,5 @@
+# Rotary Positional Embedding (RoPE) configuration
+theta: ${experiment.rope_theta}
+max_seq_len: ${experiment.max_seq_len}
+# Note: d_k is computed in main.py as d_model // num_heads
+

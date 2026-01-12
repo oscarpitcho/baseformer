@@ -1,0 +1,6 @@
+# Medium model configuration
+vocab_size: ${data.tokenizer.vocab_size}
+d_model: 1024
+num_layers: 24
+num_heads: 16
+d_ff: 4096

@@ -85,7 +85,7 @@ def clip_gradients_(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float
     params = [p for p in parameters if p.grad is not None]
 
     total_norm_sq = sum((p.grad ** 2).sum() for p in params)
-    total_norm = total_norm_sq ** 0.5
+    total_norm = total_norm_sq ** 0.5 + 1e-6 # Stability for small gradients
 
     if total_norm > max_l2_norm:
         scale = max_l2_norm / total_norm

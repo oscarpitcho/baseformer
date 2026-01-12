@@ -6,8 +6,8 @@ Example:
     uv run python tokenize_dataset.py \
         --vocab ../data/ts_vocab.pkl \
         --merges ../data/ts_merges.pkl \
-        --input_path ../data/TinyStoriesV2-GPT4-valid.txt \
-        --output_path ../data/ts_valid_tokens.npz
+        --input_path ../data/TinyStoriesV2-GPT4-train.txt \
+        --output_path ../data/ts_train_tokens.npz
         
 or for openwebtext:
     uv run python tokenize_dataset.py \

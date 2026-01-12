@@ -47,6 +47,15 @@ class Linear(Module):
         if self.use_bias:
             self.bias = Parameter(torch.empty(d_out, dtype=dtype, device=device))
 
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights with truncated normal: N(0, 2/(d_in + d_out)), truncated at [-3σ, 3σ]."""
+        std = (2.0 / (self.d_in + self.d_out)) ** 0.5
+        torch.nn.init.trunc_normal_(self.weights, mean=0.0, std=std, a=-3 * std, b=3 * std)
+        if self.use_bias:
+            torch.nn.init.zeros_(self.bias)
+
     def forward(self, x: Float[Tensor, "... d_in"]) -> Float[Tensor, "... d_out"]:
         """Apply the linear transformation y = xW^T + b.
 

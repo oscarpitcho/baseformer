@@ -1,0 +1,62 @@
+# @package _global_
+
+defaults:
+  - model: xl
+  - position: rope
+  - data: tinystories
+  - wandb: default
+  - _self_
+
+# ============================================
+# EXPERIMENT SETTINGS (source of truth)
+# ============================================
+experiment:
+  seed: 42
+  lr: 3e-4          # lower and more typical for this scale
+  min_lr: 3e-5
+  batch_size: 64     # or your max per GPU, with grad accum if needed
+  max_steps: 1000000
+  warmup_steps: 10000 # 1% of total; go to 5000 if unstable
+  weight_decay: 0.1
+  beta1: 0.95 # https://arxiv.org/pdf/2505.21829
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_every: 1000    # or 200 if you want closer monitoring
+
+
+
+  # Positional embeddings
+  rope_theta: 10000.0
+  max_seq_len: 256
+
+# ============================================
+# TOP-LEVEL SETTINGS
+# ============================================
+seed: ${experiment.seed}
+device: cuda
+experiment_name: tinystories_small
+
+# Checkpoint config
+checkpoint:
+  dir: ${hydra:runtime.output_dir}/checkpoints
+  save_every: 1000
+  resume: auto      # "auto" | explicit path | null
+  init_from: null   # Path for weight transfer (loads model only, not optimizer)
+
+# ============================================
+# HYDRA SETTINGS
+# ============================================
+hydra:
+  run:
+    dir: ${oc.env:OUTPUT_DIR,outputs}/${experiment_name}
+  sweep:
+    dir: ${oc.env:OUTPUT_DIR,outputs}/multirun/${experiment_name}
+    subdir: ${hydra.job.num}
+  job:
+    config:
+      override_dirname:
+        exclude_keys:
+          - seed
+          - device
+          - experiment_name
+
