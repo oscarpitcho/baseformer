@@ -1,7 +1,7 @@
 # @package _global_
 
 defaults:
-  - model: tiny
+  - model: small
   - position: rope
   - data: tinystories
   - wandb: default
@@ -12,16 +12,17 @@ defaults:
 # ============================================
 experiment:
   seed: 42
-  lr: 3e-4          # lower and more typical for this scale
-  min_lr: 3e-5
+  lr: 3e-3          # lower and more typical for this scale
+  min_lr: 0
+  lr_schedule: cosine  # "cosine" or "linear"
   batch_size: 64     # or your max per GPU, with grad accum if needed
-  max_steps: 30000 # Roughly 300 000 000 Tokens
+  max_steps: 20000 # Roughly 300 000 000 Tokens
   warmup_steps: 200 # 1% of total; go to 5000 if unstable
   weight_decay: 0.1
   beta1: 0.90 
   beta2: 0.95
   grad_clip: 1.0
-  eval_every: 200    # or 200 if you want closer monitoring
+  eval_every: 1000    # or 200 if you want closer monitoring
 
 
 
@@ -38,7 +39,7 @@ experiment:
 # ============================================
 seed: ${experiment.seed}
 device: cuda
-experiment_name: test
+experiment_name: small_test
 
 # Checkpoint config
 checkpoint:
