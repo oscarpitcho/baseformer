@@ -6,6 +6,12 @@ data/
 !baseformer/configs/data/
 wandb/
 outputs/
+tests/test_basics/fixtures
+
+# More Stuff
+*.nsys-rep
+*.pt
+*.csv
 
 
 #Slurm job output

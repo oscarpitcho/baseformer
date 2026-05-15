@@ -22,7 +22,8 @@ dependencies = [
     "tqdm>=4.67.1",
     "wandb>=0.19.7",
     "ty>=0.0.1a16",
-    "pynvml>=13.0.1",
+    "nvidia-ml-py>=13.590.44",
+    "torchvision>=0.17.2",
 ]
 
 [build-system]

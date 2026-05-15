@@ -3,6 +3,7 @@ Multi-head self-attention mechanism for transformer architectures.
 """
 
 import torch
+import torch.cuda.nvtx as nvtx
 from torch import Tensor
 from torch.nn import Module
 from jaxtyping import Float, Bool, Int
@@ -33,7 +34,7 @@ class MultiHeadSelfAttention(Module):
         self,
         d_model: int,
         n_heads: int,
-        rope: RotaryPositionalEmbedding = None,
+        rope: RotaryPositionalEmbedding | None = None,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ):
@@ -138,4 +139,41 @@ def scaled_dot_product_attention(
     att_scores = softmax(qk, dim=-1)
 
     return einsum(att_scores, V, "... q k, ... k d_v -> ... q d_v")
+
+
+@nvtx.range("scaled dot product attention")
+def annotated_scaled_dot_product_attention(
+    Q: Float[Tensor, "... queries d_k"],
+    K: Float[Tensor, "... keys d_k"],
+    V: Float[Tensor, "... keys d_v"],
+    mask: Bool[Tensor, "... queries keys"] | None = None,
+) -> Float[Tensor, "... queries d_v"]:
+    """Compute scaled dot-product attention with NVTX annotations for profiling.
+
+    Attention(Q, K, V) = softmax(QK^T / sqrt(d_k)) V
+
+    Args:
+        Q: (..., queries, d_k) query vectors.
+        K: (..., keys, d_k) key vectors.
+        V: (..., keys, d_v) value vectors.
+        mask: Optional (..., queries, keys) boolean mask.
+              True values indicate positions to attend to.
+
+    Returns:
+        (..., queries, d_v) attended values.
+    """
+    d_k = Q.size(-1)
+
+    with nvtx.range("computing attention scores"):
+        qk = einsum(Q, K, "... queries d_k, ... keys d_k -> ... queries keys") / (d_k ** 0.5)
+        if mask is not None:
+            qk[~mask] = torch.finfo(qk.dtype).min
+
+    with nvtx.range("computing softmax"):
+        att_scores = softmax(qk, dim=-1)
+
+    with nvtx.range("final matmul"):
+        output = einsum(att_scores, V, "... q k, ... k d_v -> ... q d_v")
+
+    return output
 

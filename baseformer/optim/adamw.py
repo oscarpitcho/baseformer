@@ -6,6 +6,7 @@ from collections.abc import Iterable, Callable
 from typing import Dict, Tuple
 
 import torch
+import torch.cuda.nvtx as nvtx
 
 
 class AdamW(torch.optim.Optimizer):
@@ -94,13 +95,58 @@ class AdamW(torch.optim.Optimizer):
                 m, v = state["m"], state["v"]
                 g = p.grad
 
-                # Update biased first and second moment estimates
-                m_new = beta1 * m + (1 - beta1) * g
-                v_new = beta2 * v + (1 - beta2) * (g ** 2)
-                state["m"], state["v"] = m_new, v_new
+                # Moments do not need backpropagation, so we can use in-place operations
+                # Update biased first and second moment estimates (in-place)
+                m.mul_(beta1).add_(g, alpha=1 - beta1)
+                v.mul_(beta2).addcmul_(g, g, value=1 - beta2)
 
-                # Parameter update
-                p -= alpha_t * m_new / (torch.sqrt(v_new) + eps)
+                # Parameter update (one intermediate for sqrt+eps)
+                p.addcdiv_(m, v.sqrt().add_(eps), value=-alpha_t)
 
-                # Apply decoupled weight decay
-                p -= alpha * weight_decay * p
+                # Apply decoupled weight decay (in-place)
+                p.mul_(1 - alpha * weight_decay)
+
+
+@torch.no_grad()
+@nvtx.range("adamw optimizer step")
+def annotated_adamw_step(self: AdamW, lr_schedule: Callable[[int, float], float] = None) -> None:
+    """
+    NVTX-annotated version of AdamW.step() for profiling.
+    """
+    self.state["step"] += 1
+    t = self.state["step"]
+    alpha = None
+
+    for group in self.param_groups:
+        beta1, beta2 = group["beta1"], group["beta2"]
+        eps = group["eps"]
+        weight_decay = group["weight_decay"]
+
+        alpha = lr_schedule(t, group["lr"]) if lr_schedule is not None else group["lr"]
+
+        with nvtx.range("compute bias-corrected lr"):
+            alpha_t = alpha * (1 - beta2 ** t) ** 0.5 / (1 - beta1 ** t)
+
+        for p in group["params"]:
+            if p.grad is None:
+                continue
+
+            state = self.state[p]
+
+            with nvtx.range("init momentum buffers"):
+                if len(state) == 0:
+                    state["m"] = torch.zeros_like(p)
+                    state["v"] = torch.zeros_like(p)
+
+            m, v = state["m"], state["v"]
+            g = p.grad
+
+            with nvtx.range("update moment estimates"):
+                m.mul_(beta1).add_(g, alpha=1 - beta1)
+                v.mul_(beta2).addcmul_(g, g, value=1 - beta2)
+
+            with nvtx.range("parameter update"):
+                p.addcdiv_(m, v.sqrt().add_(eps), value=-alpha_t)
+
+            with nvtx.range("weight decay"):
+                p.mul_(1 - alpha * weight_decay)

@@ -14,7 +14,7 @@ Usage:
     python -m baseformer.main experiment_name=finetune checkpoint.init_from=outputs/pretrain/checkpoints/step_10000.pt
 
     # Debug mode
-    uv run python -m debugpy --listen 1234 --wait-for-client main.py --config-name wandb=disabled
+    uv run python -m debugpy --listen 1234 --wait-for-client main.py wandb=disabled
 
 Reusable functions:
     initialize_data(cfg) -> (train_loader, val_loader)
@@ -25,16 +25,16 @@ import logging
 from functools import partial
 from typing import Callable
 
+import numpy as np
+import numpy.typing as npt
 import torch
-from torch.utils.data import DataLoader
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from baseformer.nn.transformer import TransformerLM
 from baseformer.nn.position import RotaryPositionalEmbedding
 from baseformer.optim.adamw import AdamW
-from baseformer.optim.scheduler import get_lr_cosine_schedule
-from baseformer.data.dataset import TokenizedDataset
+from baseformer.optim.scheduler import get_lr_cosine_schedule, get_lr_linear_schedule
 from baseformer.trainer import Trainer
 
 try:
@@ -45,34 +45,18 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
-def initialize_data(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
-    """Load and prepare train/val dataloaders.
+def initialize_data(cfg: DictConfig) -> tuple[npt.NDArray, npt.NDArray]:
+    """Load memory-mapped token arrays for train/val.
 
     Args:
-        cfg: Hydra config with data.train_path, data.val_path, 
-             data.sequence_length, experiment.batch_size.
+        cfg: Hydra config with data.train_path, data.val_path.
 
     Returns:
-        Tuple of (train_loader, val_loader).
+        Tuple of (train_tokens, val_tokens) as memory-mapped numpy arrays.
     """
-    train_dataset = TokenizedDataset(cfg.data.train_path, cfg.data.sequence_length)
-    val_dataset = TokenizedDataset(cfg.data.val_path, cfg.data.sequence_length)
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=cfg.experiment.batch_size,
-        shuffle=True,
-        pin_memory=True,
-        num_workers=8,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=cfg.experiment.batch_size,
-        shuffle=True,
-        num_workers=8,
-        pin_memory=True,
-    )
-    return train_loader, val_loader
+    train_tokens = np.load(cfg.data.train_path, mmap_mode='r')['tokens']
+    val_tokens = np.load(cfg.data.val_path, mmap_mode='r')['tokens']
+    return train_tokens, val_tokens
 
 
 def initialize_training(
@@ -135,12 +119,22 @@ def initialize_training(
     )
 
     # Build LR schedule
-    lr_schedule = partial(
-        get_lr_cosine_schedule,
-        min_learning_rate=cfg.experiment.min_lr,
-        warmup_iters=cfg.experiment.warmup_steps,
-        cosine_cycle_iters=cfg.experiment.max_steps,
-    )
+    if cfg.experiment.lr_schedule == "cosine":
+        lr_schedule = partial(
+            get_lr_cosine_schedule,
+            min_learning_rate=cfg.experiment.min_lr,
+            warmup_iters=cfg.experiment.warmup_steps,
+            cosine_cycle_iters=cfg.experiment.max_steps,
+        )
+    elif cfg.experiment.lr_schedule == "linear":
+        lr_schedule = partial(
+            get_lr_linear_schedule,
+            min_learning_rate=cfg.experiment.min_lr,
+            warmup_iters=cfg.experiment.warmup_steps,
+            linear_cycle_iters=cfg.experiment.max_steps,
+        )
+    else:
+        raise ValueError(f"Unknown lr_schedule: {cfg.experiment.lr_schedule}")
 
     return model, optimizer, lr_schedule, rope
 
@@ -172,7 +166,7 @@ def main(cfg: DictConfig) -> None:
             )
 
     # Initialize components
-    train_loader, val_loader = initialize_data(cfg)
+    train_data, val_data = initialize_data(cfg)
     model, optimizer, lr_schedule, rope = initialize_training(cfg)
 
     num_params = sum(p.numel() for p in model.parameters())
@@ -183,8 +177,8 @@ def main(cfg: DictConfig) -> None:
         model=model,
         optimizer=optimizer,
         lr_schedule=lr_schedule,
-        train_loader=train_loader,
-        val_loader=val_loader,
+        train_data=train_data,
+        val_data=val_data,
         cfg=cfg,
     )
     trainer.train()
